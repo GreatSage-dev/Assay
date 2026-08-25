@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assay On-Chain Registration</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0b0f19;
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #161c2e;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            max-width: 550px;
+            width: 100%;
+            border: 1px solid #2a344d;
+        }
+        h2 { margin-top: 0; color: #60a5fa; }
+        .field { margin-bottom: 15px; }
+        label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 5px; text-transform: uppercase; font-weight: bold; }
+        input {
+            width: 100%;
+            padding: 10px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #f8fafc;
+            font-family: monospace;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: all 0.2s;
+        }
+        button:hover { background: linear-gradient(135deg, #1d4ed8, #1e40af); }
+        #status { margin-top: 20px; word-break: break-all; font-family: monospace; font-size: 13px; }
+        .success { color: #4ade80; }
+        .error { color: #f87171; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Assay On-Chain Registration</h2>
+        <p style="font-size: 14px; color: #cbd5e1;">Submit your Assay WebAssembly scoring module directly to the Telegraph Diamond contract on Base Sepolia.</p>
+
+        <div class="field">
+            <label>Diamond Contract</label>
+            <input type="text" id="contract" value="0x5a2324aA18613FAD4e44bDF0d6c73Ec1f6D87ff8" readonly>
+        </div>
+
+        <div class="field">
+            <label>WASM Hash (bytes32)</label>
+            <input type="text" id="wasmHash" value="0xe2ee151a8fb2ae49006814815a499bf5eb60ab9aaa714622143d9684b24e2442" readonly>
+        </div>
+
+        <div class="field">
+            <label>WASM Raw URL</label>
+            <input type="text" id="wasmUrl" value="https://raw.githubusercontent.com/GreatSage-dev/Assay/main/assay.wasm" readonly>
+        </div>
+
+        <div class="field">
+            <label>Intent</label>
+            <input type="text" id="intent" value="FACT_CHECK" readonly>
+        </div>
+
+        <button id="regBtn" onclick="registerOnChain()">Connect MetaMask & Register On-Chain</button>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        const contractAddress = "0x5a2324aA18613FAD4e44bDF0d6c73Ec1f6D87ff8";
+        const abi = [
+            "function registerWasm(bytes32 wasmHash, string memory wasmUrl, string memory intent) external"
+        ];
+
+        async function registerOnChain() {
+            const statusDiv = document.getElementById("status");
+            const btn = document.getElementById("regBtn");
+
+            if (!window.ethereum) {
+                statusDiv.className = "error";
+                statusDiv.innerHTML = "MetaMask or Web3 wallet is not installed in your browser!";
+                return;
+            }
+
+            try {
+                btn.disabled = true;
+                btn.innerText = "Connecting Wallet...";
+                statusDiv.className = "";
+                statusDiv.innerText = "Requesting wallet connection...";
+
+                const provider = new ethers.providers.Web3Provider(window.ethereum);
+                await provider.send("eth_requestAccounts", []);
+                
+                // Ensure Base Sepolia Network (Chain ID 84532 / 0x14a34)
+                const network = await provider.getNetwork();
+                if (network.chainId !== 84532) {
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: '0x14a34' }],
+                        });
+                    } catch (switchError) {
+                        if (switchError.code === 4902) {
+                            await window.ethereum.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [{
+                                    chainId: '0x14a34',
+                                    chainName: 'Base Sepolia Testnet',
+                                    rpcUrls: ['https://sepolia.base.org'],
+                                    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                                    blockExplorerUrls: ['https://sepolia.basescan.org']
+                                }]
+                            });
+                        }
+                    }
+                }
+
+                const signer = provider.getSigner();
+                const address = await signer.getAddress();
+                btn.innerText = "Confirming Transaction...";
+                statusDiv.innerText = `Connected: ${address}\nSending registerWasm transaction...`;
+
+                const contract = new ethers.Contract(contractAddress, abi, signer);
+                
+                const tx = await contract.registerWasm(
+                    document.getElementById("wasmHash").value,
+                    document.getElementById("wasmUrl").value,
+                    document.getElementById("intent").value
+                );
+
+                statusDiv.innerText = `Transaction Sent!\nHash: ${tx.hash}\nWaiting for network confirmation...`;
+
+                await tx.wait();
+                
+                btn.innerText = "Registration Complete!";
+                statusDiv.className = "success";
+                statusDiv.innerHTML = `SUCCESS! Assay module registered on-chain.<br><br><a href="https://sepolia.basescan.org/tx/${tx.hash}" target="_blank" style="color:#4ade80;">View Transaction on BaseScan ↗</a>`;
+            } catch (err) {
+                btn.disabled = false;
+                btn.innerText = "Connect MetaMask & Register On-Chain";
+                statusDiv.className = "error";
+                statusDiv.innerText = "Error: " + (err.reason || err.message || err);
+            }
+        }
+    </script>
+</body>
+</html>
