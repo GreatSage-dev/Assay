@@ -52,7 +52,7 @@
             transition: all 0.2s;
         }
         button:hover { background: linear-gradient(135deg, #1d4ed8, #1e40af); }
-        #status { margin-top: 20px; word-break: break-all; font-family: monospace; font-size: 13px; }
+        #status { margin-top: 20px; word-break: break-all; font-family: monospace; font-size: 13px; white-space: pre-wrap; }
         .success { color: #4ade80; }
         .error { color: #f87171; }
     </style>
@@ -82,7 +82,7 @@
             <input type="text" id="intent" value="FACT_CHECK" readonly>
         </div>
 
-        <button id="regBtn" onclick="registerOnChain()">Connect MetaMask & Register On-Chain</button>
+        <button id="regBtn" onclick="registerOnChain()">Connect Rabby / Wallet & Register On-Chain</button>
         <div id="status"></div>
     </div>
 
@@ -96,32 +96,34 @@
             const statusDiv = document.getElementById("status");
             const btn = document.getElementById("regBtn");
 
-            if (!window.ethereum) {
+            const walletProvider = window.rabby || window.ethereum;
+
+            if (!walletProvider) {
                 statusDiv.className = "error";
-                statusDiv.innerHTML = "MetaMask or Web3 wallet is not installed in your browser!";
+                statusDiv.innerText = "Rabby or Web3 wallet is not detected in your browser!";
                 return;
             }
 
             try {
                 btn.disabled = true;
-                btn.innerText = "Connecting Wallet...";
+                btn.innerText = "Connecting Rabby Wallet...";
                 statusDiv.className = "";
-                statusDiv.innerText = "Requesting wallet connection...";
+                statusDiv.innerText = "Requesting Rabby wallet connection...";
 
-                const provider = new ethers.providers.Web3Provider(window.ethereum);
+                const provider = new ethers.providers.Web3Provider(walletProvider);
                 await provider.send("eth_requestAccounts", []);
                 
                 // Ensure Base Sepolia Network (Chain ID 84532 / 0x14a34)
                 const network = await provider.getNetwork();
                 if (network.chainId !== 84532) {
                     try {
-                        await window.ethereum.request({
+                        await walletProvider.request({
                             method: 'wallet_switchEthereumChain',
                             params: [{ chainId: '0x14a34' }],
                         });
                     } catch (switchError) {
-                        if (switchError.code === 4902) {
-                            await window.ethereum.request({
+                        if (switchError.code === 4902 || switchError.code === -32603) {
+                            await walletProvider.request({
                                 method: 'wallet_addEthereumChain',
                                 params: [{
                                     chainId: '0x14a34',
@@ -137,7 +139,7 @@
 
                 const signer = provider.getSigner();
                 const address = await signer.getAddress();
-                btn.innerText = "Confirming Transaction...";
+                btn.innerText = "Confirming Transaction in Rabby...";
                 statusDiv.innerText = `Connected: ${address}\nSending registerWasm transaction...`;
 
                 const contract = new ethers.Contract(contractAddress, abi, signer);
@@ -157,9 +159,9 @@
                 statusDiv.innerHTML = `SUCCESS! Assay module registered on-chain.<br><br><a href="https://sepolia.basescan.org/tx/${tx.hash}" target="_blank" style="color:#4ade80;">View Transaction on BaseScan ↗</a>`;
             } catch (err) {
                 btn.disabled = false;
-                btn.innerText = "Connect MetaMask & Register On-Chain";
+                btn.innerText = "Connect Rabby / Wallet & Register On-Chain";
                 statusDiv.className = "error";
-                statusDiv.innerText = "Error: " + (err.reason || err.message || err);
+                statusDiv.innerText = "Error: " + (err.reason || err.message || JSON.stringify(err));
             }
         }
     </script>
