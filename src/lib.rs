@@ -8,10 +8,11 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 // ================================================================
-//  ASSAY WASM MODULE — ULTRA-CALIBRATED 4-STAGE ALGORITHM
-//  Strictly zero allocations, stack-based arrays [u8; 1024].
-//  Combines user's 4-stage pipeline with canonical number/ordinal/currency
-//  parsing so paraphrases pass 100% while contradictions get destroyed.
+//  ASSAY WASM MODULE — ZERO-ALLOCATION 4-STAGE ALGORITHM WITH
+//  3 EDGE-CASE RESOLVERS:
+//  1. Double Negation Resolver (Even/Odd Negation Parity)
+//  2. Percent vs Decimal Equivalence (no_std parse_f32 with epsilon)
+//  3. Verbosity Forgiveness (Forgive >3.0x length if anchor match >= 80%)
 // ================================================================
 
 const MAX_BUF: usize = 1024;
@@ -43,7 +44,66 @@ impl TokenList {
     }
 }
 
-// STAGE 1: NORMALIZATION & EXTRACTION (with Number/Ordinal/Currency Canonicalization)
+fn eq_ci(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() { return false; }
+    for i in 0..a.len() {
+        if a[i].to_ascii_lowercase() != b[i].to_ascii_lowercase() { return false; }
+    }
+    true
+}
+
+// ----------------------------------------------------------------
+// RESOLVER 2: no_std f32 PARSER (Percent vs Decimal Equivalence)
+// ----------------------------------------------------------------
+fn parse_f32(token: &[u8]) -> Option<f32> {
+    if token.is_empty() { return None; }
+    let mut t = token;
+    
+    // Strip leading '$'
+    if t.len() > 0 && t[0] == b'$' {
+        t = &t[1..];
+    }
+    if t.is_empty() { return None; }
+
+    // Check for trailing '%'
+    let is_percent = t[t.len() - 1] == b'%';
+    if is_percent {
+        t = &t[..t.len() - 1];
+    }
+    if t.is_empty() { return None; }
+
+    let mut integer_part: f32 = 0.0;
+    let mut fractional_part: f32 = 0.0;
+    let mut divisor: f32 = 10.0;
+    let mut in_fraction = false;
+    let mut digits_found = false;
+
+    for &b in t.iter() {
+        if b.is_ascii_digit() {
+            digits_found = true;
+            let d = (b - b'0') as f32;
+            if !in_fraction {
+                integer_part = integer_part * 10.0 + d;
+            } else {
+                fractional_part += d / divisor;
+                divisor *= 10.0;
+            }
+        } else if b == b'.' && !in_fraction {
+            in_fraction = true;
+        } else {
+            return None; // Invalid numeric character
+        }
+    }
+
+    if !digits_found { return None; }
+
+    let mut val = integer_part + fractional_part;
+    if is_percent {
+        val /= 100.0;
+    }
+    Some(val)
+}
+
 fn number_word_to_digit(w: &[u8]) -> Option<&'static [u8]> {
     const WORDS: [(&[u8], &[u8]); 27] = [
         (b"one", b"1"), (b"first", b"1"), (b"two", b"2"), (b"second", b"2"),
@@ -60,14 +120,6 @@ fn number_word_to_digit(w: &[u8]) -> Option<&'static [u8]> {
         }
     }
     None
-}
-
-fn eq_ci(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() { return false; }
-    for i in 0..a.len() {
-        if a[i].to_ascii_lowercase() != b[i].to_ascii_lowercase() { return false; }
-    }
-    true
 }
 
 fn canonicalize<'a>(word: &[u8], buf: &'a mut [u8; NUM_BUF_LEN]) -> &'a [u8] {
@@ -153,11 +205,13 @@ fn normalize_and_tokenize(input: &[u8], out: &mut TokenList) {
             i > 0 && input[i - 1].is_ascii_digit() && i + 1 < len && input[i + 1].is_ascii_digit()
         };
 
+        let is_percent = lower == b'%';
+
         let is_hex_x = (lower == b'x' || lower == b'X') && {
             i > 0 && input[i - 1] == b'0' && (i == 1 || !input[i - 2].is_ascii_alphanumeric())
         };
 
-        let is_valid = is_alnum || is_dot || is_hex_x;
+        let is_valid = is_alnum || is_dot || is_hex_x || is_percent;
 
         if is_comma_in_num {
             // Ignore comma inside numbers
@@ -221,7 +275,16 @@ fn is_substring(needle: &[u8], haystack: &[u8]) -> bool {
 }
 
 fn match_tokens(a: &[u8], b: &[u8]) -> bool {
+    // RESOLVER 2: Percent vs Decimal Equivalence
+    if let (Some(v1), Some(v2)) = (parse_f32(a), parse_f32(b)) {
+        let diff = if v1 > v2 { v1 - v2 } else { v2 - v1 };
+        if diff < 0.001 {
+            return true;
+        }
+    }
+
     if is_substring(a, b) || is_substring(b, a) { return true; }
+
     let mut buf_a = [0u8; NUM_BUF_LEN];
     let mut buf_b = [0u8; NUM_BUF_LEN];
     let ca = canonicalize(a, &mut buf_a);
@@ -229,7 +292,9 @@ fn match_tokens(a: &[u8], b: &[u8]) -> bool {
     eq_ci(ca, cb)
 }
 
-// STAGE 3: ASYMMETRIC POLARITY PENALTY
+// ----------------------------------------------------------------
+// RESOLVER 1: THE DOUBLE NEGATION RESOLVER (Odd/Even Parity)
+// ----------------------------------------------------------------
 const NEGATION_WORDS: [&[u8]; 8] = [
     b"not", b"never", b"false", b"fake", b"disputed", b"debunked", b"incorrect", b"untrue",
 ];
@@ -284,10 +349,11 @@ fn evaluate(gt_bytes: &[u8], ma_bytes: &[u8]) -> f32 {
 
     let mut base_score = matched_gt_substrings as f32 / gt_tokens.count as f32;
 
-    // Verbosity penalty
+    // RESOLVER 3: VERBOSITY FORGIVENESS & FLUFF DAMPENING
+    // Forgive normal length variations (up to 3.5x), but dampen extreme walls of text (>3.5x)
     let verbosity_ratio = ma_tokens.count as f32 / gt_tokens.count as f32;
-    if verbosity_ratio > 2.0 {
-        base_score *= 1.5 / verbosity_ratio;
+    if verbosity_ratio > 3.5 || (verbosity_ratio > 2.0 && base_score < 0.80) {
+        base_score *= 2.0 / verbosity_ratio;
     }
 
     // STAGE 2: THE NUMBER & HASH INVARIANT (Hard Filter)
@@ -309,17 +375,23 @@ fn evaluate(gt_bytes: &[u8], ma_bytes: &[u8]) -> f32 {
         }
     }
 
-    // Any missing number is a catastrophic failure for fact checking -> 1.0 penalty per missing number
     let number_penalty = missing_numbers as f32 * 1.0;
 
-    // STAGE 3: ASYMMETRIC POLARITY PENALTY
+    // ----------------------------------------------------------------
+    // RESOLVER 1: DOUBLE NEGATION PARITY CHECK
+    // If GT and Miner both have EVEN (e.g. 0 or 2) or both have ODD,
+    // double negations cancel out -> NO PENALTY!
+    // ----------------------------------------------------------------
     let gt_neg_count = count_negations(&gt_tokens);
     let ma_neg_count = count_negations(&ma_tokens);
 
-    let polarity_penalty = if (gt_neg_count > 0) != (ma_neg_count > 0) {
-        1.0 // Total destruction for polarity inversion
+    let gt_is_odd = (gt_neg_count % 2) == 1;
+    let ma_is_odd = (ma_neg_count % 2) == 1;
+
+    let polarity_penalty = if gt_is_odd != ma_is_odd {
+        1.0 // Only penalize true odd-parity contradictions
     } else {
-        0.0
+        0.0 // Even parity (0 or 2 negations like "not false") -> NO PENALTY!
     };
 
     let final_score = base_score - number_penalty - polarity_penalty;
