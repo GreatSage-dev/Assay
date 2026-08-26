@@ -395,14 +395,14 @@ fn evaluate(gt_bytes: &[u8], ma_bytes: &[u8]) -> f32 {
         raw_recall
     };
 
-    // SATURATION SCORING CURVE v8
-    // Good paraphrases (dampened_recall >= 0.45) map to [0.90, 1.00]
-    // Bad/crushed answers (dampened_recall < 0.45) map to [0.00, 0.05]
-    let score_val = if dampened_recall >= 0.45 {
-        0.90 + 0.10 * ((dampened_recall - 0.45) / 0.55)
+    // SATURATION SCORING CURVE v9
+    // Good paraphrases (dampened_recall >= 0.35) map to [0.95, 1.00]
+    // Bad/crushed answers (dampened_recall < 0.35) map to [0.00, 0.01]
+    let score_val = if dampened_recall >= 0.35 {
+        0.95 + 0.05 * ((dampened_recall - 0.35) / 0.65)
     } else {
-        let norm = dampened_recall / 0.45;
-        0.05 * norm * norm
+        let norm = dampened_recall / 0.35;
+        0.01 * norm * norm * norm
     };
 
     score_val.clamp(0.0, 1.0)
