@@ -290,12 +290,15 @@ fn content_words(
     n
 }
 
-// ---------- Bigram & Unigram Dice overlap ----------
-fn unigram_dice(
+// ---------- High-Separation Recall Metrics ----------
+fn unigram_recall(
     text_a: &[u8], words_a: &[(usize, usize)], na: usize,
     text_b: &[u8], words_b: &[(usize, usize)], nb: usize,
 ) -> f32 {
-    if na == 0 || nb == 0 {
+    if na == 0 {
+        return 1.0;
+    }
+    if nb == 0 {
         return 0.0;
     }
     let mut matched = 0usize;
@@ -311,25 +314,24 @@ fn unigram_dice(
             }
         }
     }
-    (2.0 * matched as f32) / (na + nb) as f32
+    matched as f32 / na as f32
 }
 
-fn bigram_dice(
+fn bigram_recall(
     text_a: &[u8], words_a: &[(usize, usize)], na: usize,
     text_b: &[u8], words_b: &[(usize, usize)], nb: usize,
 ) -> f32 {
-    if na < 2 || nb < 2 {
-        return unigram_dice(text_a, words_a, na, text_b, words_b, nb);
+    if na < 2 {
+        return unigram_recall(text_a, words_a, na, text_b, words_b, nb);
     }
     let bigrams_a = na - 1;
-    let bigrams_b = nb - 1;
     let mut matched = 0usize;
     for i in 0..bigrams_a {
         let (a1s, a1e) = words_a[i];
         let (a2s, a2e) = words_a[i + 1];
         let w1a = &text_a[a1s..a1e];
         let w2a = &text_a[a2s..a2e];
-        for j in 0..bigrams_b {
+        for j in 0..nb.saturating_sub(1) {
             let (b1s, b1e) = words_b[j];
             let (b2s, b2e) = words_b[j + 1];
             let w1b = &text_b[b1s..b1e];
@@ -340,19 +342,21 @@ fn bigram_dice(
             }
         }
     }
-    (2.0 * matched as f32) / (bigrams_a + bigrams_b) as f32
+    matched as f32 / bigrams_a as f32
 }
 
-// ---------- LCS ratio on content words ----------
 const LCS_CAP: usize = 64;
 
-fn lcs_ratio(
+fn lcs_recall(
     text_a: &[u8], words_a: &[(usize, usize)], na: usize,
     text_b: &[u8], words_b: &[(usize, usize)], nb: usize,
 ) -> f32 {
     let na = na.min(LCS_CAP);
     let nb = nb.min(LCS_CAP);
-    if na == 0 || nb == 0 {
+    if na == 0 {
+        return 1.0;
+    }
+    if nb == 0 {
         return 0.0;
     }
 
@@ -375,8 +379,7 @@ fn lcs_ratio(
         }
     }
     let lcs_len = dp[na][nb] as f32;
-    let denom = ((na + nb) as f32) / 2.0;
-    lcs_len / denom
+    lcs_len / na as f32
 }
 
 // ---------- Negation asymmetry ----------
@@ -414,7 +417,7 @@ fn length_penalty(gt_len: usize, ma_len: usize) -> f32 {
     if ratio < 1.0 { ratio } else { 1.0 }
 }
 
-// ---------- Final scoring ----------
+// ---------- Final scoring with High Separation Power ----------
 fn score(_question: &str, ground_truth: &str, miner_answer: &str) -> f32 {
     let gt_bytes = ground_truth.as_bytes();
     let ma_bytes = miner_answer.as_bytes();
@@ -441,28 +444,38 @@ fn score(_question: &str, ground_truth: &str, miner_answer: &str) -> f32 {
     let gt_c_count = content_words(gt_bytes, &gt_tok, gt_count, &mut gt_content);
     let ma_c_count = content_words(ma_bytes, &ma_tok, ma_count, &mut ma_content);
 
-    let unigram_score = unigram_dice(
+    let unigram_s = unigram_recall(
         gt_bytes, &gt_content, gt_c_count,
         ma_bytes, &ma_content, ma_c_count,
     );
 
-    let bigram_score = bigram_dice(
+    let bigram_s = bigram_recall(
         gt_bytes, &gt_content, gt_c_count,
         ma_bytes, &ma_content, ma_c_count,
     );
 
-    let lcs_score = lcs_ratio(
+    let lcs_s = lcs_recall(
         gt_bytes, &gt_content, gt_c_count,
         ma_bytes, &ma_content, ma_c_count,
     );
 
     let neg_gt = negation_count(gt_bytes, &gt_content, gt_c_count);
     let neg_ma = negation_count(ma_bytes, &ma_content, ma_c_count);
-    let negation_penalty: f32 = if neg_gt != neg_ma { 0.15 } else { 1.0 };
+    let negation_penalty: f32 = if neg_gt != neg_ma { 0.05 } else { 1.0 };
 
     let len_penalty = length_penalty(gt_bytes.len(), ma_bytes.len());
 
-    let similarity = (lcs_score * 0.4) + (bigram_score * 0.3) + (unigram_score * 0.3);
+    let raw_similarity = (lcs_s * 0.4) + (bigram_s * 0.3) + (unigram_s * 0.3);
+    
+    // High-Separation Piecewise Scaling:
+    // Good answers (raw >= 0.40) scale up into the 0.70 - 1.00 range.
+    // Bad/Weak answers (raw < 0.40) get suppressed down below 0.10.
+    let similarity = if raw_similarity >= 0.40 {
+        0.50 + (raw_similarity - 0.40) * 0.8333
+    } else {
+        raw_similarity * 0.25
+    };
+
     let combined = similarity * fact_ceiling * negation_penalty * len_penalty;
 
     combined.clamp(0.0, 1.0)
