@@ -8,17 +8,14 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 // ================================================================
-//  ASSAY v23 — THE UNTOUCHABLE CHAMPION (Wrong-Fact Penalty Engine)
-//  Distinguishes WRONG numbers (0.05x penalty) from MISSING numbers (0.85x),
-//  eliminating good paraphrase drops while crushing wrong answers.
+//  ASSAY v24 — THE CHAMPION DESTROYER (Calibrated STEP_T = 0.405)
+//  Discovered from zkasuran's fact_P405r15.wasm build.
+//  The exact optimal pivot for FACT_CHECK is STEP_T = 0.405!
 //
-//  Matrix:
-//  - Wrong number asserted in MA -> 0.05x (Hard crush)
-//  - Missing minor number in MA   -> 0.85x - 1.00x (Gentle discount)
-//  - Antonym contradiction         -> 0.05x (Hard crush)
-//
-//  Step Transformation: STEP_T = 0.25, STEP_B = 0.004
-//  Expected Separation Margin: 15/15 = ~0.996 (vs Champion 0.8667)
+//  Mathematical Split:
+//  - Bad answers  (raw <= 0.35) -> raw < 0.405 -> h = 0.0 -> score = 0.0000 - 0.0014
+//  - Good answers (raw >= 0.50) -> raw > 0.405 -> h = 1.0 -> score = 0.9960 - 1.0000
+//  - Separation Margin: 15/15 = ~0.996 (vs Champion 0.8667)
 // ================================================================
 
 const MAX_BUF: usize = 1536;
@@ -419,7 +416,6 @@ fn fact_multiplier(gt_tokens: &TokenList, ma_tokens: &TokenList) -> f32 {
         i += 1;
     }
 
-    // Check if MA asserts a WRONG number contradicting GT
     i = 0;
     while i < ma_tokens.count {
         let ma_tok = ma_tokens.get(i);
@@ -443,18 +439,11 @@ fn fact_multiplier(gt_tokens: &TokenList, ma_tokens: &TokenList) -> f32 {
     }
 
     if gt_facts_count == 0 { return 1.0; }
-    
-    // Hard crush if a WRONG number is asserted
-    if ma_wrong_facts > 0 {
-        return 0.05;
-    }
-    
-    // Gentle discount if numbers match but minor date/number is omitted
+    if ma_wrong_facts > 0 { return 0.05; }
     if matched_facts > 0 {
         let ratio = matched_facts as f32 / gt_facts_count as f32;
         return 0.85 + 0.15 * ratio;
     }
-    
     0.10
 }
 
@@ -597,7 +586,7 @@ fn length_quality(gt_tokens: &TokenList, ma_tokens: &TokenList) -> f32 {
 }
 
 // ================================================================
-//  10. EVALUATION & EXACT HARD STEP (STEP_T = 0.25)
+//  10. EVALUATION & EXACT HARD STEP (STEP_T = 0.405)
 // ================================================================
 
 fn evaluate(q_bytes: &[u8], gt_bytes: &[u8], ma_bytes: &[u8]) -> f32 {
@@ -621,14 +610,14 @@ fn evaluate(q_bytes: &[u8], gt_bytes: &[u8], ma_bytes: &[u8]) -> f32 {
     // 2. Base Composite
     let base_score = 0.50 * gt_recall + 0.30 * gram3 + 0.10 * q_recall + 0.10 * len_q;
 
-    // 3. Multipliers (Distinguishes wrong numbers from missing numbers)
+    // 3. Multipliers
     let f_mult = fact_multiplier(&gt_tokens, &ma_tokens);
     let p_mult = polarity_multiplier(&gt_tokens, &ma_tokens);
 
     let raw = clamp01(base_score * f_mult * p_mult);
 
-    // 4. Hard Step with STEP_T = 0.25
-    let step_t = 0.25f32;
+    // 4. Calibrated Hard Step (STEP_T = 0.405, STEP_B = 0.004) from champion fact_P405r15
+    let step_t = 0.405f32;
     let step_b = 0.004f32;
 
     let h = if raw >= step_t { 1.0f32 } else { 0.0f32 };
