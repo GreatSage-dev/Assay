@@ -9,6 +9,7 @@ base_url: https://raw.githubusercontent.com/GreatSage-dev/Assay/main
 
 endpoints:
   - path: /miner.py
+    external_path: /miner.py
     intent: FACT_CHECK
     method: POST
 
