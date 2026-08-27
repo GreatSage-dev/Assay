@@ -1,7 +1,7 @@
 version: "1"
 kind: miner
 protocol: bittensor
-id: assay-miner
+id: 1
 slug: assay-miner
 name: AssayMiner
 description: Precision Miner for FACT_CHECK intent on Telegraph Protocol
