@@ -1,7 +1,12 @@
+version: "1"
+kind: miner
+protocol: bittensor
+id: assay-miner
+slug: assay-miner
 name: AssayMiner
-intent: FACT_CHECK
-version: 1.0.0
 description: Precision Miner for FACT_CHECK intent on Telegraph Protocol
-endpoint: https://raw.githubusercontent.com/GreatSage-dev/Assay/main/miner.py
-fee_floor: 0.01
-author: GreatSage
+base_url: https://raw.githubusercontent.com/GreatSage-dev/Assay/main
+intents:
+  - FACT_CHECK
+auth:
+  type: none
