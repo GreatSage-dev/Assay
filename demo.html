@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assay v10 — Active Champion WASM Scorer Demo</title>
+    <style>
+        :root {
+            --bg: #0b0e14;
+            --card-bg: #151921;
+            --accent: #10b981;
+            --accent-dim: rgba(16, 185, 129, 0.15);
+            --danger: #ef4444;
+            --text: #f3f4f6;
+            --muted: #9ca3af;
+            --border: #262c36;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; }
+        body { background: var(--bg); color: var(--text); padding: 2rem; display: flex; justify-content: center; }
+        .container { max-width: 850px; width: 100%; }
+        header { margin-bottom: 2rem; text-align: center; }
+        .badge { background: var(--accent-dim); color: var(--accent); padding: 0.4rem 1rem; border-radius: 9999px; border: 1px solid var(--accent); font-weight: bold; display: inline-block; margin-bottom: 1rem; }
+        h1 { font-size: 2.2rem; margin-bottom: 0.5rem; }
+        p.subtitle { color: var(--muted); font-size: 1rem; }
+
+        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+        .field { margin-bottom: 1.2rem; }
+        label { display: block; font-weight: 600; margin-bottom: 0.5rem; color: var(--muted); font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        textarea, input { width: 100%; background: #0b0e14; border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 0.8rem; font-size: 1rem; }
+        textarea { height: 80px; resize: vertical; }
+
+        .presets { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+        .preset-btn { background: #1c222d; border: 1px solid var(--border); color: var(--text); padding: 0.5rem 0.9rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
+        .preset-btn:hover { border-color: var(--accent); background: var(--accent-dim); }
+
+        .btn-submit { width: 100%; background: var(--accent); color: #000; font-weight: bold; font-size: 1.1rem; padding: 0.9rem; border: none; border-radius: 8px; cursor: pointer; transition: opacity 0.2s; }
+        .btn-submit:hover { opacity: 0.9; }
+
+        .result-box { text-align: center; padding: 1.5rem; border-radius: 8px; background: #0b0e14; border: 1px solid var(--border); display: none; margin-top: 1rem; }
+        .score-val { font-size: 3.5rem; font-weight: 800; }
+        .score-good { color: var(--accent); }
+        .score-bad { color: var(--danger); }
+        .result-meta { color: var(--muted); margin-top: 0.5rem; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <div class="badge">👑 ACTIVE CHAMPION (REG #1188)</div>
+        <h1>Assay v10 Live Scorer Demo</h1>
+        <p class="subtitle">Zero-allocation Rust WebAssembly evaluation engine for Telegraph Protocol</p>
+    </header>
+
+    <div class="card">
+        <label>Preset Test Cases (Click to load)</label>
+        <div class="presets">
+            <button class="preset-btn" onclick="loadPreset(0)">Exact Match</button>
+            <button class="preset-btn" onclick="loadPreset(1)">Paraphrase + Synonyms</button>
+            <button class="preset-btn" onclick="loadPreset(2)">Double Negation</button>
+            <button class="preset-btn" onclick="loadPreset(3)">Antonym Attack (Profit/Loss)</button>
+            <button class="preset-btn" onclick="loadPreset(4)">Prefix Guard (Unsuccessful)</button>
+            <button class="preset-btn" onclick="loadPreset(5)">Verbosity Yapping</button>
+        </div>
+
+        <div class="field">
+            <label>Ground Truth Answer</label>
+            <textarea id="gtInput">the transaction succeeded at block 192841</textarea>
+        </div>
+
+        <div class="field">
+            <label>Miner Answer</label>
+            <textarea id="maInput">execution completed at block 192841</textarea>
+        </div>
+
+        <button class="btn-submit" onclick="evaluateWasm()">⚡ Evaluate with Live WASM</button>
+
+        <div class="result-box" id="resultBox">
+            <div class="score-val" id="scoreValue">0.0000</div>
+            <div class="result-meta" id="resultMeta">Executed inside WebAssembly runtime</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let wasmInstance = null;
+
+    const presets = [
+        { gt: "the claim is true", ma: "the claim is true" },
+        { gt: "the transaction succeeded at block 192841", ma: "execution completed at block 192841" },
+        { gt: "the claim is true", ma: "the claim is not false" },
+        { gt: "generated profit of 10M", ma: "generated loss of 10M" },
+        { gt: "the migration was successful", ma: "the migration was unsuccessful" },
+        { gt: "tx reverted at block 100", ma: "while there are many perspectives on this issue extensive analysis shows tx reverted at block 100" }
+    ];
+
+    function loadPreset(idx) {
+        document.getElementById('gtInput').value = presets[idx].gt;
+        document.getElementById('maInput').value = presets[idx].ma;
+        evaluateWasm();
+    }
+
+    async function initWasm() {
+        try {
+            const resp = await fetch('assay.wasm');
+            const bytes = await resp.arrayBuffer();
+            const module = await WebAssembly.instantiate(bytes, {});
+            wasmInstance = module.instance;
+            console.log("Assay v10 WASM initialized!");
+        } catch (e) {
+            console.error("WASM load failed:", e);
+        }
+    }
+
+    async function evaluateWasm() {
+        if (!wasmInstance) await initWasm();
+        if (!wasmInstance) return alert("WASM runtime not ready!");
+
+        const { alloc, dealloc, rank_answer, memory } = wasmInstance.exports;
+
+        const gt = document.getElementById('gtInput').value.trim();
+        const ma = document.getElementById('maInput').value.trim();
+
+        const encoder = new TextEncoder();
+        const gtBytes = encoder.encode(gt);
+        const maBytes = encoder.encode(ma);
+
+        const gtPtr = alloc(gtBytes.length);
+        const maPtr = alloc(maBytes.length);
+
+        const mem = new Uint8Array(memory.buffer);
+        mem.set(gtBytes, gtPtr);
+        mem.set(maBytes, maPtr);
+
+        const qPtr = alloc(1);
+        const score = rank_answer(qPtr, 0, gtPtr, gtBytes.length, maPtr, maBytes.length);
+
+        dealloc(qPtr, 1);
+        dealloc(maPtr, maBytes.length);
+        dealloc(gtPtr, gtBytes.length);
+
+        const box = document.getElementById('resultBox');
+        const val = document.getElementById('scoreValue');
+        const meta = document.getElementById('resultMeta');
+
+        box.style.display = 'block';
+        val.textContent = score.toFixed(4);
+
+        if (score >= 0.90) {
+            val.className = 'score-val score-good';
+            meta.textContent = 'PASS — Verified High Precision Answer (Score >= 0.90)';
+        } else {
+            val.className = 'score-val score-bad';
+            meta.textContent = 'FAIL — Rejected by Assay v10 Gates (Score < 0.90)';
+        }
+    }
+
+    window.onload = initWasm;
+</script>
+</body>
+</html>
