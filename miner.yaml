@@ -7,12 +7,14 @@ name: AssayMiner
 description: Precision Miner for FACT_CHECK intent on Telegraph Protocol
 base_url: https://raw.githubusercontent.com/GreatSage-dev/Assay/main
 
+semantics:
+  FACT_CHECK:
+    path: /miner.py
+    external_path: /miner.py
+    method: POST
+
 intents:
   - FACT_CHECK
-
-semantics:
-  intents:
-    - FACT_CHECK
 
 endpoints:
   - path: /miner.py
