@@ -628,12 +628,14 @@ fn evaluate(q_bytes: &[u8], gt_bytes: &[u8], ma_bytes: &[u8]) -> f32 {
     // We use a strictly increasing piecewise function to guarantee
     // perfect ordering is preserved, while violently separating
     // the scores into "good" (>0.98) and "bad" (<0.02).
-    let threshold = 0.35;
+    // Threshold moved to 0.60 because bad answers now get ~0.35 
+    // just from matching question relevance + length.
+    let threshold = 0.60;
     if composite > threshold {
-        // Map [0.35, 1.0] -> [0.98, 1.0]
+        // Map [0.60, 1.0] -> [0.98, 1.0]
         composite = 0.98 + (composite - threshold) * (0.02 / (1.0 - threshold));
     } else {
-        // Map [0.0, 0.35] -> [0.0, 0.02]
+        // Map [0.0, 0.60] -> [0.0, 0.02]
         composite = composite * (0.02 / threshold);
     }
 
